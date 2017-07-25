@@ -1,0 +1,2093 @@
+---
+title: "APLIVISEF"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+  runtime: shiny  
+---
+
+```{r global, include=FALSE}
+# author: "Miguel Ángel Daza"
+# date: "27 de julio de 2017"
+# Este trabajo es parte del TFM del Máster Universitario en Análisis y Visualización de Datos Masivos / Visual Analytics and Big Data (VISA) - PER1 2016-2017
+
+# En este CHUNK se colocan todos los datos que se vayan a compartir
+# declaración de las librerías de R necesarias para la aplicación
+library(shiny) # Web Application Framework for R
+library(igraph) # 	Network Analysis and Visualization
+library(flexdashboard) #	R Markdown Format for Flexible Dashboards
+library(rmarkdown) # Dynamic Documents for R
+library(data.table) # Extension of 'data.frame'
+library(htmltools) # 	Tools for HTML
+library(htmlwidgets) # HTML Widgets for R
+library(DT) # A Wrapper of the JavaScript Library 'DataTables'
+library(vcd) # Visualizing Categorical Data
+library(networkD3) # 	D3 JavaScript Network Graphs from R
+library(parsetR) # devtools::install_github("timelyportfolio/parsetR")
+library(plotly) # mapa de calor
+#library(pryr)  # para unenclose
+#options(encoding = 'UTF-8')
+
+#  librerías necesarias para crear el mapa de España
+library(sp) #(Classes and Methods for Spatial Data) para dibujar mapas
+library(maptools) #	Tools for Reading and Handling Spatial Objects
+library(RColorBrewer) # ColorBrewer Palettes
+
+
+setwd("~/UNIR/TFM/TFM")
+ArchivoDatos="DatosyMapas_TFM.Rdata" 
+if (!file.exists(ArchivoDatos)) {
+## No existe el archivo de datos
+  # crear el mapa de España por Provincias
+  # los datos (*.RData) del mapa se han obtenido de Global Administrative Areas  http://www.gadm.org/country 
+  nfile5<-"ESP_adm2_b.RData"
+  load(nfile5)
+  esp2<-ESP_adm2_b
+  esp2$NAME_2 <- as.factor((as.character(esp2$NAME_2)))
+  esp2$Region <- tolower(esp2$NAME_2)
+  ##### Para recuadrar las Canarias
+  cuadro<-Lines(list(Line(matrix(c(-0.7,36.01069, -0.7,37.85,  4.289268,37.85), byrow=TRUE, ncol=2))),ID="a")
+  cuadro<-SpatialLines(list(cuadro))
+  # Crear la lista del recuadro de CANARIAS
+  recuadro<-list("sp.lines", cuadro, lwd=.5, lty=2 )
+  #Leer las coordenadas de las provincias
+  coordenadas2 <- coordinates(esp2)
+  
+ ## leer los datos del archivo CodMApas.csv que contiene las provincias y su código como Matrícula Provincial
+  CodMap <- read.csv(file="CodMApas.csv", header=TRUE, sep=";", encoding = "UTF-8")
+  names(CodMap)[1]<-"Cod"
+  #C.Provincia<-(sort(as.character(CodMap$Mat)))
+  C.Provincia<-(as.character(CodMap$Mat))
+  CodMap$Mat<-factor(as.character(CodMap$Mat), levels=C.Provincia)
+ 
+## leer los datos del archivo  TFM_datos.csv que contiene los datos de la extracción
+  datos <- read.csv(file="TFM_datos.csv", header=TRUE, sep=";")
+  datos<-datos[datos$Cod_Situacion=="Serv. Activo",]
+  datos$CodNaci<-factor(as.character(datos$CodNaci), levels=C.Provincia)
+  datos$CodDesti<-factor(as.character(datos$CodDesti), levels=C.Provincia)
+  
+ ## se crean variables para los selecctores posteriores. Además se añade la opción "**TOTAL"" 
+  C.Ejercito<-c(as.character(sort(unique(datos$Cod_Ejercito))), "**TOTAL")
+  C.Relacion<-c(as.character(sort(unique(datos$Cod_Relacion))),"**TOTAL")
+  C.Escala<-c(as.character(sort(unique(datos$Cod_Escala))),"**TOTAL")
+  C.Cuerpo<-c(as.character(sort(unique(datos$Cod_Cuerpo))),"**TOTAL")
+  C.Sexo<-c("H","M","**TOTAL")
+  C.Provincia2<-c("**TOTAL",sort(C.Provincia))
+
+  
+## codificar las distancias entre provincias (este proceso tarda su tiempo)
+  ## leer el archivo con las diatancias entre las provincias limítrofes
+  g1<-read.graph("num_provincia.ncol",format="ncol",directed=FALSE)
+  
+  g2<-read.graph("km_provincia.ncol",format="ncol",directed=FALSE)
+
+  
+  # función que calcula el número de nodo
+  numnodo<-function(nodo, nodos){
+  num<-factor(nodo, levels=nodos)
+  return(as.numeric(num))
+  }
+  nodos<-as.character(V(g1)$name)
+  # guardar en desde y hasta los códigos numméricos de las provincias
+  desde<-numnodo(as.character(datos$CodNaci), nodos)
+  hasta<-numnodo(as.character(datos$CodDesti), nodos)
+  # colocar en datos$NumProv la distancia entre provincias
+  for (i in 1:length(desde)){
+  datos$NumProv[i]<-shortest.paths(g1, desde[i], hasta[i])
+  }
+  
+  nodos<-as.character(V(g2)$name)
+  # guardar en desde y hasta los códigos numméricos de las provincias
+  desde<-numnodo(as.character(datos$CodNaci), nodos)
+  hasta<-numnodo(as.character(datos$CodDesti), nodos)
+  # colocar en datos$KmProv la distancia en Kilómetros entre provincias
+  for (i in 1:length(desde)){
+  datos$KmProv[i]<-shortest.paths(g2, desde[i], hasta[i])
+  }
+  
+  
+ ## la variable se llamó decadas, dado que en un principio ésta iba a ser la partición, pero luego se vió que era muy grande
+ ## hacer comparaciones de 0 a 40 años, y se prefirió reducir a de 0 a 20 años.
+  datos$decada<-round(datos$Tiempo/5,0)
+  # crear 4 subarchivos según los tiempos (1 [0,5], 2 [5,10], 3[10,15], y 4 [15,20])
+  datos1<-datos[datos$decada==1,]
+  datos2<-datos[datos$decada==2,]
+  datos3<-datos[datos$decada==3,]
+  datos4<-datos[datos$decada==4,]  
+}else{
+## SI que existe el archivo datos
+  # cargar los datos y los mapas
+  load(ArchivoDatos) #leer/cargar archivo de datos
+  ###   save.image("DatosyMapas_TFM.Rdata")
+}  
+
+## Definición de las funciones DatosMapa() y PintarMapa()
+## Función para obtener los datos para ser presentados en un mapa de España por Provincias
+  DatosMapa <- function(datos){
+  Nacimiento<-aggregate(datos$CodNaci,by=list(datos$CodNaci), FUN=length)
+  names(Nacimiento)<-c("Cod", "Num")
+  Destino<-aggregate(datos$CodDesti,by=list(datos$CodDesti), FUN=length)
+  names(Destino)<-c("Cod", "Num")
+  df.CodMapa<-CodMap
+  df.CodMapa$Naci<-0
+  df.CodMapa$Desti<-0
+  df.CodMapa[as.numeric(Nacimiento$Cod),5]<-Nacimiento$Num
+  df.CodMapa[as.numeric(Destino$Cod),6]<-Destino$Num
+  df.CodMapa
+  
+  df.CodMapa$P.Naci<-round(df.CodMapa$Naci/sum(df.CodMapa$Naci)*100,1)
+  df.CodMapa$P.Desti<-round(df.CodMapa$Desti/sum(df.CodMapa$Desti)*100,1)
+  return(df.CodMapa)
+  }
+
+## Para unos datos dados dibuja un mapa de coropletas de España por Provincias
+  PintarMapa <- function(Datos, Titulo){
+    esp2@data<-Datos
+  mapa<-spplot(esp2[1], col.regions = colorRampPalette(brewer.pal(9, "YlOrRd"))(18),col = "#081D58", main =Titulo, sp.layout = list( recuadro))
+    return(mapa)
+  }
+
+
+```
+
+Inicio
+===================================== 
+    
+Row
+-------------------------------------
+
+### 
+    
+```{r}
+## Tabla para SITUACIÓN
+z1<-aggregate(datos$Cod_Situacion,by=list(datos$Cod_Situacion), FUN=length)
+names(z1)<-c("Situación", "Num")
+knitr::kable(z1)
+```
+    
+### 
+    
+```{r}
+## tabla para EJÉRCITO
+z1<-aggregate(datos$Cod_Ejercito,by=list(datos$Cod_Ejercito), FUN=length)
+names(z1)<-c("Ejército", "Num")
+knitr::kable(z1)
+```
+ 
+### 
+    
+```{r}
+## Tabla para RELACIÓN
+z1<-aggregate(datos$Cod_Relacion,by=list(datos$Cod_Relacion), FUN=length)
+names(z1)<-c("Relación", "Num")
+knitr::kable(z1)
+
+``` 
+   
+### 
+    
+```{r}
+## Tabla para CUERPO
+z1<-aggregate(datos$Cod_Cuerpo,by=list(datos$Cod_Cuerpo), FUN=length)
+names(z1)<-c("Cuerpo", "Num")
+knitr::kable(z1)
+
+```
+      
+### 
+    
+```{r}
+## Tabla para ESCALA
+z1<-aggregate(datos$Cod_Escala,by=list(datos$Cod_Escala), FUN=length)
+names(z1)<-c("Escala", "Num")
+knitr::kable(z1)
+```
+      
+### 
+    
+```{r}
+## Tabla para SEXO
+z1<-aggregate(datos$Sexo,by=list(datos$Sexo), FUN=length)
+names(z1)<-c("Sexo", "Num")
+knitr::kable(z1)
+
+```
+                      
+   
+Row
+-------------------------------------
+    
+### Provincias de Nacimiento por Ejércitos
+    
+    
+```{r}
+tabla1<-table(datos$CodNaci,datos$Cod_Ejercito)
+# convertir primero en matriz y luego en data.frame
+DT::datatable(as.data.frame.matrix(tabla1), options = list(colnames=TRUE,
+  bPaginate = FALSE
+))
+# knitr::kable(tabla1)
+```
+
+    
+### Distribución por Ejércitos
+    
+    
+```{r}
+tt<-table(datos$Cod_Ejercito)
+
+tt<-rbind(tt, round(tt/sum(tt)*100,2))
+
+rownames(tt)<-c("efectivos","porcentaje")
+
+## realizar un pequeño sectograma para visualizar los datos por ejeércitos
+ pie(tt[2,], col=c("lightblue", "darkgreen", "blue", "brown"))
+
+knitr::kable(tt)
+
+```
+   
+
+    
+### Provincias de Destino por Ejércitos
+
+    
+```{r}
+tabla2<-table(datos$CodDesti,datos$Cod_Ejercito)
+# convertir primero en matriz y luego en data.frame
+DT::datatable(as.data.frame.matrix(tabla2), options = list(colnames=TRUE,
+  bPaginate = FALSE
+))
+# knitr::kable(tabla1)
+```
+
+
+Porcentajes
+===================================== 
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+Selección de parámetros para filtrar:
+
+```{r}
+selectInput("n_ejercito2", label = "Seleccione Ejercito:",
+            choices = C.Ejercito, selected = "**TOTAL")
+
+selectInput("n_relac2", label = "Seleccione la Relacion:",
+            choices = C.Relacion, selected = "**TOTAL")
+
+selectInput("n_cuerpo2", label = "Seleccione Cuerpo:",
+            choices = C.Cuerpo, selected = "**TOTAL")
+
+selectInput("n_escala2", label = "Seleccione la Escala:",
+            choices = C.Escala, selected = "**TOTAL")
+
+
+selectInput("n_sexo2", label = "Seleccione Sexo:",
+            choices = C.Sexo, selected = "**TOTAL")
+
+
+
+
+## crear una selección de datos filtrada sólo por EJÉRCITO 
+ ndatosE2 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito2
+  d1<-datos
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ })
+ 
+## crear una selección de datos filtrada por EJÉRCITO, por RELACIÓN, por CUERPO, por ESCALA, y por SEXO 
+ mdatosM2 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito2
+  d1<-datos
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+    Cond2<-input$n_relac2
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+    
+   Cond5<-input$n_cuerpo2
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+      
+   Cond3<-input$n_escala2
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+    Cond4<-input$n_sexo2
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+  d1
+  })
+  
+
+ ## MapDatos2 contendrá el resultado de preparar los datos para ser presentados en mapa de coropletas, 
+ ## utilizando los datos mdatosM2 que van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO 
+  MapDatos2<-reactive({
+  d1<-mdatosM2()
+  DatosMapa(d1)
+  })
+
+ ## tdatosN2 contendrá el resultado de preparar los datos para ser presentados en un tabla, (provincia de Nacimiento)
+ ## utilizando los datos mdatosM2 que van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO 
+ tdatosN2 <- reactive({
+  d1<-mdatosM2()
+ 
+  dd<-table(d1$CodNaci, d1$Cod_Ejercito)
+  dd<-as.data.frame(dd)
+  dd<-aggregate(dd$Freq,by=list(dd$Var1), FUN=sum)
+  names(dd)<-c("Provincia", "Frec")
+  dd$Porc<-round(dd$Frec/(sum(dd$Frec))*100,2)
+  dd<-dd[with(dd, order(-Porc)), ]
+  dd$FrecCum<-cumsum(dd$Frec)
+  dd$PorcCum<-cumsum(dd$Porc)
+  dd<-dd[,c(1,2,4,3,5)]
+   as.data.frame.matrix(dd, row.names = FALSE)
+  
+})
+ 
+ ## tdatosD2 contendrá el resultado de preparar los datos para ser presentados en un tabla, (provincia de Destino)
+ ## utilizando los datos mdatosM2 que van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO 
+  tdatosD2 <- reactive({
+  d1<-mdatosM2()
+ 
+  dd<-table(d1$CodDesti, d1$Cod_Ejercito)
+  dd<-as.data.frame(dd)
+  dd<-aggregate(dd$Freq,by=list(dd$Var1), FUN=sum)
+  names(dd)<-c("Provincia", "Frec")
+  dd$Porc<-round(dd$Frec/(sum(dd$Frec))*100,2)
+  dd<-dd[with(dd, order(-Porc)), ]
+  dd$FrecCum<-cumsum(dd$Frec)
+  dd$PorcCum<-cumsum(dd$Porc)
+  dd<-dd[,c(1,2,4,3,5)]
+   as.data.frame.matrix(dd, row.names = FALSE)
+  
+})
+  
+  ## realizará el contraste entre las distribuciones de Nacidos y de Destinados, por provincias.
+  contraste1<-reactive({
+    d1<- tdatosN2() 
+    d1<-d1[with(d1, order(Provincia)), ]
+      d2<- tdatosD2()
+          d2<-d2[with(d2, order(Provincia)), ]
+    dd<-data.frame( d1$Frec,Naci=d1$Porc, d2$Frec, Desti=d2$Porc)    
+    dd      
+    
+  })
+  
+  
+ ## mostrará un texto con los individuos seleccionados
+ ## utilizando los datos mdatosM2 que van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO 
+ renderText({
+   dd<-mdatosM2()[1]
+   nefectivos<-dim(dd)[1]
+   paste0("Efectivos seleccionados = ",nefectivos, "\n" )
+ })
+ 
+   
+```
+
+
+
+Row {data-height=200}
+---------------------------------------
+
+### Contraste
+
+
+```{r}
+## presentará en pantalla el resultado del contraste chi-cuadrado entre las distribuciones de Nacidos y de Destiandos, por provincias.
+renderPrint({
+  datos.Seleccionados<-contraste1()
+   datos.Seleccionados<- datos.Seleccionados[,c(1,3)]
+  chisq.test(datos.Seleccionados, simulate.p.value = TRUE) #utilizando la opción de simular el p.valor por haber provincias con muy pocos datos
+  #chisq.test(datos.Seleccionados, correct = TRUE)
+})
+
+```
+
+### Resultado contraste {data-height=200, data-width=200}
+
+```{r}
+## mostrar en un ValueBox el resultado del contraste.
+## NARANJA si p.valor <= alfa
+## AZUL si p.valor > alfa
+renderValueBox({
+  datos.Seleccionados<-contraste1()
+   datos.Seleccionados<- datos.Seleccionados[,c(1,3)]
+  tt<-chisq.test(datos.Seleccionados, simulate.p.value = TRUE)  
+pv<-round(tt$p.value,5)
+if (is.na(pv)){
+valueBox(pv,  caption = "valor no válido" ,icon = "fa-link", color ="danger")  
+}else{
+valueBox(pv,  caption = ifelse(pv<=0.05, "p-valor<=alfa, Se rechaza Ho, Distribuciones No  iguales", "p-valor>alfa, No rechaza Ho, Distribuciones iguales") ,icon = "fa-link", color = ifelse(pv<=0.05, "warning", "primary"))
+}  
+})
+```
+    
+Row 
+---------------------------------------
+
+### Mapa por provincia Nacimiento
+```{r}
+## crear el mapa para las provincias de nacimiento con los datos de MapDatos2
+ ## MapDatos2 contendrá el resultado de preparar los datos para ser presentados en mapa de coropletas, 
+ ## utilizando los datos mdatosM2 que van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO 
+NuevoMapaN2<-reactive({
+d1<-MapDatos2()
+esp2@data<-d1[7]
+p<-spplot(esp2[1], col.regions = colorRampPalette(brewer.pal(9, "YlOrRd"))(18),col = "#081D58", sp.layout = list( recuadro))
+})
+
+## dibujar el mapa para las provincias de nacimiento.
+renderPlot({
+p<-NuevoMapaN2()
+print(p)
+})
+```
+
+
+
+### Tabla: por provincia de Nacimiento
+```{r}
+## presentar los datos de las provincias de nacimiento en una tabla
+renderTable({
+  tdatosN2()
+})
+```
+
+
+
+Row
+---------------------------------------
+
+### Tabla: por provincia de Destino
+```{r}
+
+## presentar los datos de las provincias de destino en una tabla
+renderTable({
+  tdatosD2()
+})
+
+```
+
+
+### Mapa por provincia de destino
+```{r}
+## crear el mapa para las provincias de destino con los datos de MapDatos2
+ ## MapDatos2 contendrá el resultado de preparar los datos para ser presentados en mapa de coropletas, 
+ ## utilizando los datos mdatosM2 que van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO 
+NuevoMapaD2<-reactive({
+d1<-MapDatos2()
+esp2@data<-d1[8]
+p<-spplot(esp2[1], col.regions = colorRampPalette(brewer.pal(9, "YlOrRd"))(18),col = "#081D58", sp.layout = list( recuadro))
+})
+## dibujar el mapa para las provincias de destino.
+renderPlot({
+p<-NuevoMapaD2()
+print(p)
+})
+```
+
+
+
+
+Relaciones
+===================================== 
+
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+Selección de parámetros para filtrar:
+
+```{r}
+selectInput("n_ejercito", label = "Seleccione Ejercito:",
+            choices = C.Ejercito, selected = "**TOTAL")
+
+selectInput("n_relac", label = "Seleccione la Relacion:",
+            choices = C.Relacion, selected = "**TOTAL")
+
+
+selectInput("n_cuerpo", label = "Seleccione Cuerpo:",
+            choices = C.Cuerpo, selected = "**TOTAL")
+
+selectInput("n_escala", label = "Seleccione la Escala:",
+            choices = C.Escala, selected = "**TOTAL")
+
+
+selectInput("n_sexo", label = "Seleccione Sexo:",
+            choices = C.Sexo, selected = "**TOTAL")
+
+
+
+ sliderInput("bw_limite", label = "% Limite:",
+            min = 5, max = 100, value = 25, step = 5)
+```
+
+
+Column
+-----------------------------------------------------------------------
+
+### grafo {data-height=800}
+
+```{r}
+## Dibujar el grafo de las relaciones contenidas en ndatos()
+renderPlot({
+ndf0<-ndatos()
+EJERCITO<-input$n_ejercito
+enlaces<-data.frame(from=ndf0$CodNaci,to=ndf0$CodDesti,peso=ndf0$porc)
+
+vertices<-data.frame(name=sort(unique(c(as.character(enlaces$from),as.character(enlaces$to)))))
+
+g <- graph_from_data_frame(enlaces, directed=TRUE, vertices=vertices)
+#print(g, e=TRUE, v=TRUE)
+#p<-plot(g)
+
+
+ag1<-aggregate(enlaces$peso,by=list(enlaces$from), FUN=sum)
+ag2<-aggregate(enlaces$peso,by=list(enlaces$to), FUN=sum)
+ag<-as.character(ag1$Group.1)
+ag1$Group.1<-factor(ag, levels = as.character(vertices$name))
+ag<-as.character(ag2$Group.1)
+ag2$Group.1<-factor(ag, levels = as.character(vertices$name))
+
+ag<-data.frame(vertices, N=0, D=0)
+
+ag$N[ ag[ag1$Group.1,1]]<-ag1$x
+ag$D[ ag[ag2$Group.1,1]]<-ag2$x
+ag
+
+
+V(g)$weight<-ag$N
+E(g)$weight<-enlaces$peso
+sum(V(g)$weight)
+
+V(g)$weight<-ag$N
+p<- plot(g, edge.width=E(g)$weight, edge.label=paste0(E(g)$weight, " %"),  vertex.size=ag$N, vertex.label= paste0(V(g)$name," ", V(g)$weight, "%"), main=paste0(EJERCITO, ": Prov. Nacimiento ", sum(V(g)$weight), "% del total"))
+
+print(p)
+})
+```
+
+
+
+### tabla {data-height=800, data-width=250}
+   
+ ```{r}
+valores<- reactiveValues()
+
+## ndatosE contendrá la base de datos filtrada sólo por EJÉRCITO
+ ndatosE <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito
+  d1<-datos
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+  d1
+ })
+ 
+ 
+ 
+  datosF <- reactive({
+## datosF contendrá la base de datos filtrada según las opciones
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO 
+  Cond1<-input$n_ejercito
+  d1<-datos
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ 
+    Cond2<-input$n_relac
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+
+    Cond5<-input$n_cuerpo
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+ 
+   Cond3<-input$n_escala
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+  d1
+  })
+ 
+## crear ndatos() que contendrá las relaciones entre provincias de nacimiento y destino
+## con las siguientes columnas  "CodNaci", "CodDesti", "Freq", "porc", "cum"
+## sólo mostrará el porcentaje acumulado que sea inferior al límite marcado
+ ndatos <- reactive({
+d1<-datosF()
+
+  valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+ ndf0<-df0[df0$cum<=input$bw_limite,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ })
+ 
+ #ndatos<-datos[datos$Cod_Ejercito==input$n_ejercito,]
+
+## presentar la tabla con los datos 
+renderTable({
+    ndatos()
+})
+
+
+ 
+```
+
+Row
+-----------------------------------------------------------------------
+
+
+### Número de enlaces {data-height=50, data-width=130}
+
+```{r}
+## presenta en un ValueBox el número de enlaces que hay entre las provincias de nacimiento y destino
+## para la selección establecida.
+renderValueBox({
+nenlaces<-dim(ndatos())[1]
+valueBox(nenlaces,  caption = "enlaces seleccionados",icon = "fa-link", color="primary")
+})
+```
+
+### Número de efectivos {data-height=50, data-width=150}
+
+```{r}
+## presenta en un ValueBox el número de personas que hay entre las provincias de nacimiento y destino
+## para la selección establecida.
+renderValueBox({
+nefectivos<-sum(ndatos()[3])
+valueBox(nefectivos,  caption = "efectivos seleccionados",icon = "fa-battery-2", color="info")
+})
+```
+
+### Número de efectivos {data-height=50, data-width=150}
+
+```{r}
+## presenta en un ValueBox el número de personas totales para ese EJÉRCITO.
+renderValueBox({
+  d1<-ndatosE()
+nefectivosT<-dim(d1)[1]
+valueBox(nefectivosT,  caption = paste0("Total para ",input$n_ejercito),icon = "fa-battery-full", color="success")
+})
+```
+
+### Porcentaje {data-height=50, data-width=150}
+
+```{r}
+## presenta en un Gauge el porcenteje entre los efectivos seleccionados y los efectivos totales
+renderGauge({
+rate <- round(sum(ndatos()[3])/dim(ndatosE())[1]*100,2)
+gauge(rate, min = 0, max = 100, symbol = '%', label="Porcentaje", gaugeSectors(
+  success = c(66, 100), warning = c(33, 66), danger = c(0, 33)
+))
+})
+```
+
+Relaciones <20 años
+===================================== 
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+Selección de parámetros para filtrar:
+
+```{r}
+selectInput("n_ejercito3", label = "Seleccione Ejercito:",
+            choices = C.Ejercito, selected = "**TOTAL")
+
+selectInput("n_relac3", label = "Seleccione la Relacion:",
+            choices = C.Relacion, selected = "**TOTAL")
+
+selectInput("n_cuerpo3", label = "Seleccione Cuerpo:",
+            choices = C.Cuerpo, selected = "**TOTAL")
+
+selectInput("n_escala3", label = "Seleccione la Escala:",
+            choices = C.Escala, selected = "**TOTAL")
+
+selectInput("n_sexo3", label = "Seleccione Sexo:",
+            choices = C.Sexo, selected = "**TOTAL")
+
+ sliderInput("bw_limite3", label = "% Limite:",
+            min = 5, max = 100, value = 25, step = 1)
+ 
+
+```
+
+    
+Row
+---------------------------------------
+
+### Entre 0 y 5 años
+```{r}
+## en ndatosD1() se guardarán los datos filtrados de datos1(), es decir los datos originales restingidos al primer quinquenio.
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO y PORCENTAJE LÍMITE.
+## tendrá las siguientes columnas: "CodNaci", "CodDesti", "Freq", "porc", "cum"
+ndatosD1 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito3
+  d1<-datos1
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ 
+    Cond2<-input$n_relac3
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+
+   Cond5<-input$n_cuerpo3
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+   Cond3<-input$n_escala3
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo3
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+ 
+valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+ ndf0<-df0[df0$cum<=input$bw_limite3,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ })
+
+ ## se dibuja el grafo para el primer quinquenio
+renderPlot({
+ndf0<-ndatosD1()
+EJERCITO<-input$n_ejercito3
+enlaces<-data.frame(from=ndf0$CodNaci,to=ndf0$CodDesti,peso=ndf0$porc)
+
+vertices<-data.frame(name=sort(unique(c(as.character(enlaces$from),as.character(enlaces$to)))))
+
+g <- graph_from_data_frame(enlaces, directed=TRUE, vertices=vertices)
+#print(g, e=TRUE, v=TRUE)
+#p<-plot(g)
+
+
+ag1<-aggregate(enlaces$peso,by=list(enlaces$from), FUN=sum)
+ag2<-aggregate(enlaces$peso,by=list(enlaces$to), FUN=sum)
+ag<-as.character(ag1$Group.1)
+ag1$Group.1<-factor(ag, levels = as.character(vertices$name))
+ag<-as.character(ag2$Group.1)
+ag2$Group.1<-factor(ag, levels = as.character(vertices$name))
+
+ag<-data.frame(vertices, N=0, D=0)
+
+ag$N[ ag[ag1$Group.1,1]]<-ag1$x
+ag$D[ ag[ag2$Group.1,1]]<-ag2$x
+ag
+
+
+V(g)$weight<-ag$N
+E(g)$weight<-enlaces$peso
+sum(V(g)$weight)
+
+V(g)$weight<-ag$N
+p<- plot(g, edge.width=E(g)$weight, edge.label=paste0(E(g)$weight, " %"),  vertex.size=ag$N, vertex.label= paste0(V(g)$name," ", V(g)$weight, "%"), main=paste0(EJERCITO, ": Prov. Nacimiento ", sum(V(g)$weight), "% del total"))
+
+print(p)
+})
+```
+
+
+### Entre 5 y 10 años
+```{r}
+## en ndatosD2() se guardarán los datos filtrados de datos2(), es decir los datos originales restingidos al segundo quinquenio.
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO y PORCENTAJE LÍMITE.
+## tendrá las siguientes columnas: "CodNaci", "CodDesti", "Freq", "porc", "cum"
+ndatosD2 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito3
+  d1<-datos2
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+    Cond5<-input$n_cuerpo3
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+    Cond2<-input$n_relac3
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+
+ 
+   Cond3<-input$n_escala3
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo3
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+ 
+valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+ ndf0<-df0[df0$cum<=input$bw_limite3,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ })
+
+  ## se dibuja el grafo para el segundo quinquenio
+renderPlot({
+ndf0<-ndatosD2()
+EJERCITO<-input$n_ejercito3
+enlaces<-data.frame(from=ndf0$CodNaci,to=ndf0$CodDesti,peso=ndf0$porc)
+
+vertices<-data.frame(name=sort(unique(c(as.character(enlaces$from),as.character(enlaces$to)))))
+
+g <- graph_from_data_frame(enlaces, directed=TRUE, vertices=vertices)
+#print(g, e=TRUE, v=TRUE)
+#p<-plot(g)
+
+
+ag1<-aggregate(enlaces$peso,by=list(enlaces$from), FUN=sum)
+ag2<-aggregate(enlaces$peso,by=list(enlaces$to), FUN=sum)
+ag<-as.character(ag1$Group.1)
+ag1$Group.1<-factor(ag, levels = as.character(vertices$name))
+ag<-as.character(ag2$Group.1)
+ag2$Group.1<-factor(ag, levels = as.character(vertices$name))
+
+ag<-data.frame(vertices, N=0, D=0)
+
+ag$N[ ag[ag1$Group.1,1]]<-ag1$x
+ag$D[ ag[ag2$Group.1,1]]<-ag2$x
+ag
+
+
+V(g)$weight<-ag$N
+E(g)$weight<-enlaces$peso
+sum(V(g)$weight)
+
+V(g)$weight<-ag$N
+p<- plot(g, edge.width=E(g)$weight, edge.label=paste0(E(g)$weight, " %"),  vertex.size=ag$N, vertex.label= paste0(V(g)$name," ", V(g)$weight, "%"), main=paste0(EJERCITO, ": Prov. Nacimiento ", sum(V(g)$weight), "% del total"))
+
+print(p)
+})
+```
+
+
+Row
+---------------------------------------
+
+### Entre 10 y 15 años
+```{r}
+## en ndatosD3() se guardarán los datos filtrados de datos3(), es decir los datos originales restingidos al tercer quinquenio.
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO y PORCENTAJE LÍMITE.
+## tendrá las siguientes columnas: "CodNaci", "CodDesti", "Freq", "porc", "cum"
+ndatosD3 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito3
+  d1<-datos3
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ 
+    Cond2<-input$n_relac3
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+
+    Cond5<-input$n_cuerpo3
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+   Cond3<-input$n_escala3
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo3
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+ 
+valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+ ndf0<-df0[df0$cum<=input$bw_limite3,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ })
+
+ ## se dibuja el grafo para el tercer quinquenio
+renderPlot({
+ndf0<-ndatosD3()
+EJERCITO<-input$n_ejercito3
+enlaces<-data.frame(from=ndf0$CodNaci,to=ndf0$CodDesti,peso=ndf0$porc)
+
+vertices<-data.frame(name=sort(unique(c(as.character(enlaces$from),as.character(enlaces$to)))))
+
+g <- graph_from_data_frame(enlaces, directed=TRUE, vertices=vertices)
+#print(g, e=TRUE, v=TRUE)
+#p<-plot(g)
+
+
+ag1<-aggregate(enlaces$peso,by=list(enlaces$from), FUN=sum)
+ag2<-aggregate(enlaces$peso,by=list(enlaces$to), FUN=sum)
+ag<-as.character(ag1$Group.1)
+ag1$Group.1<-factor(ag, levels = as.character(vertices$name))
+ag<-as.character(ag2$Group.1)
+ag2$Group.1<-factor(ag, levels = as.character(vertices$name))
+
+ag<-data.frame(vertices, N=0, D=0)
+
+ag$N[ ag[ag1$Group.1,1]]<-ag1$x
+ag$D[ ag[ag2$Group.1,1]]<-ag2$x
+ag
+
+
+V(g)$weight<-ag$N
+E(g)$weight<-enlaces$peso
+sum(V(g)$weight)
+
+V(g)$weight<-ag$N
+p<- plot(g, edge.width=E(g)$weight, edge.label=paste0(E(g)$weight, " %"),  vertex.size=ag$N, vertex.label= paste0(V(g)$name," ", V(g)$weight, "%"), main=paste0(EJERCITO, ": Prov. Nacimiento ", sum(V(g)$weight), "% del total"))
+
+print(p)
+})
+```
+
+
+### Entre 15 y 20 años
+```{r}
+## en ndatosD4() se guardarán los datos filtrados de datos4(), es decir los datos originales restingidos al cuarto quinquenio.
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO y PORCENTAJE LÍMITE.
+## tendrá las siguientes columnas: "CodNaci", "CodDesti", "Freq", "porc", "cum"
+ndatosD4 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito3
+  d1<-datos4
+   if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ 
+    Cond2<-input$n_relac3
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+   Cond5<-input$n_cuerpo3
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+ 
+   Cond3<-input$n_escala3
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo3
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+    
+valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+ ndf0<-df0[df0$cum<=input$bw_limite3,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ })
+
+  ## se dibuja el grafo para el cuarto quinquenio
+renderPlot({
+ndf0<-ndatosD4()
+EJERCITO<-input$n_ejercito3
+enlaces<-data.frame(from=ndf0$CodNaci,to=ndf0$CodDesti,peso=ndf0$porc)
+
+vertices<-data.frame(name=sort(unique(c(as.character(enlaces$from),as.character(enlaces$to)))))
+
+g <- graph_from_data_frame(enlaces, directed=TRUE, vertices=vertices)
+#print(g, e=TRUE, v=TRUE)
+#p<-plot(g)
+
+
+ag1<-aggregate(enlaces$peso,by=list(enlaces$from), FUN=sum)
+ag2<-aggregate(enlaces$peso,by=list(enlaces$to), FUN=sum)
+ag<-as.character(ag1$Group.1)
+ag1$Group.1<-factor(ag, levels = as.character(vertices$name))
+ag<-as.character(ag2$Group.1)
+ag2$Group.1<-factor(ag, levels = as.character(vertices$name))
+
+ag<-data.frame(vertices, N=0, D=0)
+
+ag$N[ ag[ag1$Group.1,1]]<-ag1$x
+ag$D[ ag[ag2$Group.1,1]]<-ag2$x
+ag
+
+
+V(g)$weight<-ag$N
+E(g)$weight<-enlaces$peso
+sum(V(g)$weight)
+
+V(g)$weight<-ag$N
+p<- plot(g, edge.width=E(g)$weight, edge.label=paste0(E(g)$weight, " %"),  vertex.size=ag$N, vertex.label= paste0(V(g)$name," ", V(g)$weight, "%"), main=paste0(EJERCITO, ": Prov. Nacimiento ", sum(V(g)$weight), "% del total"))
+
+print(p)
+})
+```
+
+Mapas
+===================================== 
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+Selección de parámetros para filtrar:
+
+```{r}
+selectInput("n_ejercito4", label = "Seleccione Ejercito:",
+            choices = C.Ejercito, selected = "**TOTAL")
+
+selectInput("n_relac4", label = "Seleccione la Relacion:",
+            choices = C.Relacion, selected = "**TOTAL")
+
+selectInput("n_cuerpo4", label = "Seleccione Cuerpo:",
+            choices = C.Cuerpo, selected = "**TOTAL")
+
+selectInput("n_escala4", label = "Seleccione la Escala:",
+            choices = C.Escala, selected = "**TOTAL")
+
+
+selectInput("n_sexo4", label = "Seleccione Sexo:",
+            choices = C.Sexo, selected = "**TOTAL")
+
+
+
+ sliderInput("bw_limite4", label = "% Limite:",
+            min = 5, max = 100, value = 25, step = 1)
+ 
+##  ndatosE4() guardará los datos originales datos() filtrados sólo por EJÉRCITO.
+ ndatosE4 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito4
+  d1<-datos
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ })
+ 
+ ##  mdatosM4() guardará los datos originales datos() 
+ ## filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO
+ mdatosM4 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito4
+  d1<-datos
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+    Cond2<-input$n_relac4
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+    
+     Cond5<-input$n_cuerpo4
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+      
+    
+   Cond3<-input$n_escala4
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+    Cond4<-input$n_sexo4
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+  d1
+  })
+  
+
+## preparar los datos mdatosM4() para ser presentados en un mapa de coropletas  
+  MapDatos<-reactive({
+  d1<-mdatosM4()
+  DatosMapa(d1)
+  })
+
+
+## en ndatos4() se guardarán los datos filtrados de datos(), es decir los datos originales.
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO y PORCENTAJE LÍMITE.
+## tendrá las siguientes columnas: "CodNaci", "CodDesti", "Freq", "porc", "cum"
+ ndatos4 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito4
+  d1<-datos
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ 
+    Cond2<-input$n_relac4
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+
+    Cond5<-input$n_cuerpo4
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+   Cond3<-input$n_escala4
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo4
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+ 
+
+  valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+
+ ndf0<-df0[df0$cum<=input$bw_limite4,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ ndf0
+ }) 
+ 
+
+## presentar en texto el número de efectivos seleccionados 
+ renderText({
+   nefectivos<-sum(ndatos4()[3])
+   paste0("Efectivos seleccionados = ",nefectivos, "\n" )
+ })
+ 
+```
+
+
+
+Row {data-height=60}
+---------------------------------------
+
+### Selecciones 
+
+```{r}
+
+## mostrar en texto las selecciones en vigor
+renderText({
+  d1<-paste0("EJÉRCITO: ", input$n_ejercito4, "........RELACIÓN: ", input$n_relac4, "........ESCALA: ", input$n_escala4, "........SEXO: ", input$n_sexo4, "........%: ", input$bw_limite4)
+  d1
+})
+
+```
+
+    
+Row 
+---------------------------------------
+
+### Mapa por provincia Nacimiento
+```{r}
+## dibujar el mapa de coropletas para las provincias de nacimiento
+NuevoMapaN<-reactive({
+d1<-MapDatos()
+esp2@data<-d1[7]
+p<-spplot(esp2[1], col.regions = colorRampPalette(brewer.pal(9, "YlOrRd"))(18),col = "#081D58", sp.layout = list( recuadro))
+})
+
+renderPlot({
+p<-NuevoMapaN()
+print(p)
+})
+```
+
+
+
+### Gráfico de distribución entre Prov.Nacimiento y Prov.Destino
+```{r}
+## crear los datos para construir el diagrama de fluidos entre las provincias de nacimiento y de destino.
+NuevoGrafoS<-reactive({
+d1<-ndatos4()
+
+menlaces<-data.frame(source=d1$CodNaci, target=d1$CodDesti, value=d1$porc)
+#enlaces
+# seleccionar solo los enlaces que cumplan un peso >=  
+#menlaces<-enlaces[enlaces$peso>=0.8,]
+# nombrar las columnas
+# names(menlaces) = c("source", "target", "value")
+# crear origen con el nombre de las provincias de origen, ordenadas y únicas
+origen<-sort(unique(as.character(menlaces$source)))
+menlaces$source<-as.character(menlaces$source)
+menlaces$source<-factor(menlaces$source, levels=origen)
+# crear origen con el nombre de las provincias de destino, ordenadas y únicas
+destino<-sort(unique(as.character(menlaces$target)))
+menlaces$target<-as.character(menlaces$target)
+menlaces$target<-factor(menlaces$target, levels=destino)
+
+
+# links debe ser un data.frame
+# en vez de poner las siglas de la provincia, ponemos su número según los niveles del factor
+links<-data.frame(source=as.numeric(menlaces$source), target=as.numeric(menlaces$target), value=menlaces$value)
+
+
+# nodes sera un data.frame con los nombre de las provincias (origen + destino)
+nodes=data.frame(name=c(origen,destino))  # nodes debe ser un data.frame
+
+links$source<-links$source-1 # se le resta 1 para que el inicio sea en el nodo 0
+links$target<-links$target+length(origen)-1 # se le resta 1 y se le suma el nº de provincias de origen
+
+
+list(c(nodes,links))
+
+
+})
+
+## dibujar el diagrama de fluidos entre las provincias de nacimiento y de destino
+renderSankeyNetwork({
+dd<-NuevoGrafoS()
+nodes<-data.frame(name=dd[[1]]$name)
+links<-data.frame(source=as.integer(dd[[1]]$source),target=as.integer(dd[[1]]$target), value=dd[[1]]$value)
+
+p<-sankeyNetwork(Links = links, Nodes = nodes,
+              Source = "source", Target = "target",
+              Value = "value", NodeID = "name",
+              fontSize= 12, nodeWidth = 30, units=" % efectivos")
+
+print(p)
+})
+
+
+```
+
+
+
+Row
+---------------------------------------
+
+### Tabla: Listado de enlaces hasta el % determinado
+```{r}
+
+## mostrar la tabla con los enlaces hasta el porcentaje acumulado determinado.
+renderTable({
+  ndatos4()
+  
+})
+
+```
+
+
+### Mapa por provincia de destino
+```{r}
+## dibujar el mapa de coropletas para las provincias de destino
+NuevoMapaD<-reactive({
+d1<-MapDatos()
+esp2@data<-d1[8]
+p<-spplot(esp2[1], col.regions = colorRampPalette(brewer.pal(9, "YlOrRd"))(18),col = "#081D58", sp.layout = list( recuadro))
+})
+
+renderPlot({
+p<-NuevoMapaD()
+print(p)
+})
+```
+
+Evolución <20 años
+===================================== 
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+Selección de parámetros para filtrar:
+
+```{r}
+selectInput("n_ejercito5", label = "Seleccione Ejercito:",
+            choices = C.Ejercito, selected = "**TOTAL")
+
+selectInput("n_relac5", label = "Seleccione la Relacion:",
+            choices = C.Relacion, selected = "**TOTAL")
+
+selectInput("n_cuerpo5", label = "Seleccione Cuerpo:",
+            choices = C.Cuerpo, selected = "**TOTAL")
+
+
+selectInput("n_escala5", label = "Seleccione la Escala:",
+            choices = C.Escala, selected = "**TOTAL")
+
+
+selectInput("n_sexo5", label = "Seleccione Sexo:",
+            choices = C.Sexo, selected = "**TOTAL")
+
+
+
+ sliderInput("bw_limite5", label = "% Limite:",
+            min = 5, max = 100, value = 25, step = 1)
+ 
+
+```
+
+    
+Row
+---------------------------------------
+
+### Entre 0 y 5 años
+```{r}
+## en mdatosD1() se guardarán los datos filtrados de datos1(), es decir los datos originales restingidos al primer quinquenio.
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO y PORCENTAJE LÍMITE.
+## tendrá las siguientes columnas: "CodNaci", "CodDesti", "Freq", "porc", "cum"
+mdatosD1 <- reactive({
+ # ver condición EJERCITO
+  d1<-datos1
+     Cond1<-input$n_ejercito5
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ 
+    Cond2<-input$n_relac5
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+
+   Cond5<-input$n_cuerpo5
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+     
+   Cond3<-input$n_escala5
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo5
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+ 
+valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+ ndf0<-df0[df0$cum<=input$bw_limite5,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ })
+
+# preparar los datos para construir el diagrama de flujos
+NuevoGrafoS1<-reactive({
+d1<-mdatosD1()
+menlaces<-data.frame(source=d1$CodNaci, target=d1$CodDesti, value=d1$porc)
+#enlaces
+# seleccionar solo los enlaces que cumplan un peso >=  
+#menlaces<-enlaces[enlaces$peso>=0.8,]
+# nombrar las columnas
+# names(menlaces) = c("source", "target", "value")
+# crear origen con el nombre de las provincias de origen, ordenadas y únicas
+origen<-sort(unique(as.character(menlaces$source)))
+menlaces$source<-as.character(menlaces$source)
+menlaces$source<-factor(menlaces$source, levels=origen)
+# crear origen con el nombre de las provincias de destino, ordenadas y únicas
+destino<-sort(unique(as.character(menlaces$target)))
+menlaces$target<-as.character(menlaces$target)
+menlaces$target<-factor(menlaces$target, levels=destino)
+
+
+# links debe ser un data.frame
+# en vez de poner las siglas de la provincia, ponemos su número según los niveles del factor
+links<-data.frame(source=as.numeric(menlaces$source), target=as.numeric(menlaces$target), value=menlaces$value)
+
+
+# nodes sera un data.frame con los nombre de las provincias (origen + destino)
+nodes=data.frame(name=c(origen,destino))  # nodes debe ser un data.frame
+
+links$source<-links$source-1 # se le resta 1 para que el inicio sea en el nodo 0
+links$target<-links$target+length(origen)-1 # se le resta 1 y se le suma el nº de provincias de origen
+
+
+list(c(nodes,links))
+
+
+})
+
+
+# dibujar el diagrama de flujo entre las provinicas de nacimiento y de destino
+renderSankeyNetwork({
+dd<-NuevoGrafoS1()
+nodes<-data.frame(name=dd[[1]]$name)
+links<-data.frame(source=as.integer(dd[[1]]$source),target=as.integer(dd[[1]]$target), value=dd[[1]]$value)
+
+p<-sankeyNetwork(Links = links, Nodes = nodes,
+              Source = "source", Target = "target",
+              Value = "value", NodeID = "name",
+              fontSize= 12, nodeWidth = 30, units=" % efectivos")
+
+print(p)
+
+})
+```
+
+
+### Entre 5 y 10 años
+```{r}
+## en mdatosD2() se guardarán los datos filtrados de datos2(), es decir los datos originales restingidos al segundo quinquenio.
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO y PORCENTAJE LÍMITE.
+## tendrá las siguientes columnas: "CodNaci", "CodDesti", "Freq", "porc", "cum"
+mdatosD2 <- reactive({
+ # ver condición EJERCITO
+
+  d1<-datos2
+     Cond1<-input$n_ejercito5
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ 
+    Cond2<-input$n_relac5
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+
+    Cond5<-input$n_cuerpo5
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+   Cond3<-input$n_escala5
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo5
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+ 
+valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+ ndf0<-df0[df0$cum<=input$bw_limite5,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ })
+
+# preparar los datos para construir el diagrama de flujos
+NuevoGrafoS2<-reactive({
+d1<-mdatosD2()
+menlaces<-data.frame(source=d1$CodNaci, target=d1$CodDesti, value=d1$porc)
+#enlaces
+# seleccionar solo los enlaces que cumplan un peso >=  
+#menlaces<-enlaces[enlaces$peso>=0.8,]
+# nombrar las columnas
+# names(menlaces) = c("source", "target", "value")
+# crear origen con el nombre de las provincias de origen, ordenadas y únicas
+origen<-sort(unique(as.character(menlaces$source)))
+menlaces$source<-as.character(menlaces$source)
+menlaces$source<-factor(menlaces$source, levels=origen)
+# crear origen con el nombre de las provincias de destino, ordenadas y únicas
+destino<-sort(unique(as.character(menlaces$target)))
+menlaces$target<-as.character(menlaces$target)
+menlaces$target<-factor(menlaces$target, levels=destino)
+
+
+# links debe ser un data.frame
+# en vez de poner las siglas de la provincia, ponemos su número según los niveles del factor
+links<-data.frame(source=as.numeric(menlaces$source), target=as.numeric(menlaces$target), value=menlaces$value)
+
+
+# nodes sera un data.frame con los nombre de las provincias (origen + destino)
+nodes=data.frame(name=c(origen,destino))  # nodes debe ser un data.frame
+
+links$source<-links$source-1 # se le resta 1 para que el inicio sea en el nodo 0
+links$target<-links$target+length(origen)-1 # se le resta 1 y se le suma el nº de provincias de origen
+
+
+list(c(nodes,links))
+
+
+})
+
+# dibujar el diagrama de flujo entre las provinicas de nacimiento y de destino
+renderSankeyNetwork({
+dd<-NuevoGrafoS2()
+nodes<-data.frame(name=dd[[1]]$name)
+links<-data.frame(source=as.integer(dd[[1]]$source),target=as.integer(dd[[1]]$target), value=dd[[1]]$value)
+
+p<-sankeyNetwork(Links = links, Nodes = nodes,
+              Source = "source", Target = "target",
+              Value = "value", NodeID = "name",
+              fontSize= 12, nodeWidth = 30, units=" % efectivos")
+
+print(p)
+
+})
+```
+
+
+Row
+---------------------------------------
+
+### Entre 10 y 15 años
+```{r}
+## en mdatosD3() se guardarán los datos filtrados de datos3(), es decir los datos originales restingidos al tercer quinquenio.
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO y PORCENTAJE LÍMITE.
+## tendrá las siguientes columnas: "CodNaci", "CodDesti", "Freq", "porc", "cum
+mdatosD3 <- reactive({
+ # ver condición EJERCITO
+
+  d1<-datos3
+     Cond1<-input$n_ejercito5
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ 
+    Cond2<-input$n_relac5
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+
+    Cond5<-input$n_cuerpo5
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+   Cond3<-input$n_escala5
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo5
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+ 
+valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+ ndf0<-df0[df0$cum<=input$bw_limite5,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ })
+
+ 
+# preparar los datos para construir el diagrama de flujos
+NuevoGrafoS3<-reactive({
+d1<-mdatosD3()
+menlaces<-data.frame(source=d1$CodNaci, target=d1$CodDesti, value=d1$porc)
+#enlaces
+# seleccionar solo los enlaces que cumplan un peso >=  
+#menlaces<-enlaces[enlaces$peso>=0.8,]
+# nombrar las columnas
+# names(menlaces) = c("source", "target", "value")
+# crear origen con el nombre de las provincias de origen, ordenadas y únicas
+origen<-sort(unique(as.character(menlaces$source)))
+menlaces$source<-as.character(menlaces$source)
+menlaces$source<-factor(menlaces$source, levels=origen)
+# crear origen con el nombre de las provincias de destino, ordenadas y únicas
+destino<-sort(unique(as.character(menlaces$target)))
+menlaces$target<-as.character(menlaces$target)
+menlaces$target<-factor(menlaces$target, levels=destino)
+
+
+# links debe ser un data.frame
+# en vez de poner las siglas de la provincia, ponemos su número según los niveles del factor
+links<-data.frame(source=as.numeric(menlaces$source), target=as.numeric(menlaces$target), value=menlaces$value)
+
+
+# nodes sera un data.frame con los nombre de las provincias (origen + destino)
+nodes=data.frame(name=c(origen,destino))  # nodes debe ser un data.frame
+
+links$source<-links$source-1 # se le resta 1 para que el inicio sea en el nodo 0
+links$target<-links$target+length(origen)-1 # se le resta 1 y se le suma el nº de provincias de origen
+
+
+list(c(nodes,links))
+
+
+})
+
+# dibujar el diagrama de flujo entre las provinicas de nacimiento y de destino
+renderSankeyNetwork({
+dd<-NuevoGrafoS3()
+nodes<-data.frame(name=dd[[1]]$name)
+links<-data.frame(source=as.integer(dd[[1]]$source),target=as.integer(dd[[1]]$target), value=dd[[1]]$value)
+
+p<-sankeyNetwork(Links = links, Nodes = nodes,
+              Source = "source", Target = "target",
+              Value = "value", NodeID = "name",
+              fontSize= 12, nodeWidth = 30, units=" % efectivos")
+
+print(p)
+
+})
+```
+
+
+### Entre 15 y 20 años
+```{r}
+
+## en mdatosD4() se guardarán los datos filtrados de datos4(), es decir los datos originales restingidos al cuarto quinquenio.
+## los datos van filtrados por: EJÉRCITO, RELACIÓN, CUERPO, ESCALA, y SEXO y PORCENTAJE LÍMITE.
+## tendrá las siguientes columnas: "CodNaci", "CodDesti", "Freq", "porc", "cum
+mdatosD4 <- reactive({
+ # ver condición EJERCITO
+
+  d1<-datos4
+   Cond1<-input$n_ejercito5
+   if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+ 
+    Cond2<-input$n_relac5
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+   Cond5<-input$n_cuerpo5
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+ 
+   Cond3<-input$n_escala5
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+ 
+ 
+    Cond4<-input$n_sexo5
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+ 
+valores$efectivos<-row(d1)
+
+ df<-as.data.frame(table(d1$CodNaci, d1$CodDesti))
+ df0<-df[df$Freq>0,]
+ suma<-sum(df0$Freq)
+ df0$porc<-round(df0$Freq/suma*100,1)
+ df0<-df0[with(df0, order(-Freq)), ]
+ df0$cum<-cumsum(df0$porc)
+ ndf0<-df0[df0$cum<=input$bw_limite5,]
+ colnames(ndf0)<-c("CodNaci", "CodDesti", "Freq", "porc", "cum")
+ as.data.frame.matrix(ndf0, row.names = FALSE)
+ })
+
+ # preparar los datos para construir el diagrama de flujos
+NuevoGrafoS4<-reactive({
+d1<-mdatosD4()
+menlaces<-data.frame(source=d1$CodNaci, target=d1$CodDesti, value=d1$porc)
+#enlaces
+# seleccionar solo los enlaces que cumplan un peso >=  
+#menlaces<-enlaces[enlaces$peso>=0.8,]
+# nombrar las columnas
+# names(menlaces) = c("source", "target", "value")
+# crear origen con el nombre de las provincias de origen, ordenadas y únicas
+origen<-sort(unique(as.character(menlaces$source)))
+menlaces$source<-as.character(menlaces$source)
+menlaces$source<-factor(menlaces$source, levels=origen)
+# crear origen con el nombre de las provincias de destino, ordenadas y únicas
+destino<-sort(unique(as.character(menlaces$target)))
+menlaces$target<-as.character(menlaces$target)
+menlaces$target<-factor(menlaces$target, levels=destino)
+
+
+# links debe ser un data.frame
+# en vez de poner las siglas de la provincia, ponemos su número según los niveles del factor
+links<-data.frame(source=as.numeric(menlaces$source), target=as.numeric(menlaces$target), value=menlaces$value)
+
+
+# nodes sera un data.frame con los nombre de las provincias (origen + destino)
+nodes=data.frame(name=c(origen,destino))  # nodes debe ser un data.frame
+
+links$source<-links$source-1 # se le resta 1 para que el inicio sea en el nodo 0
+links$target<-links$target+length(origen)-1 # se le resta 1 y se le suma el nº de provincias de origen
+
+
+list(c(nodes,links))
+
+
+})
+
+# dibujar el diagrama de flujo entre las provinicas de nacimiento y de destino
+renderSankeyNetwork({
+dd<-NuevoGrafoS4()
+nodes<-data.frame(name=dd[[1]]$name)
+links<-data.frame(source=as.integer(dd[[1]]$source),target=as.integer(dd[[1]]$target), value=dd[[1]]$value)
+
+p<-sankeyNetwork(Links = links, Nodes = nodes,
+              Source = "source", Target = "target",
+              Value = "value", NodeID = "name",
+              fontSize= 12, nodeWidth = 30, units=" % efectivos")
+
+print(p)
+
+})
+```
+
+
+Distancias
+===================================== 
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+Selección de parámetros para filtrar:
+
+```{r}
+selectInput("n_ejercito6", label = "Seleccione Ejercito:",
+            choices = C.Ejercito, selected = "**TOTAL")
+
+selectInput("n_relac6", label = "Seleccione la Relacion:",
+            choices = C.Relacion, selected = "**TOTAL")
+
+selectInput("n_cuerpo6", label = "Seleccione Cuerpo:",
+            choices = C.Cuerpo, selected = "**TOTAL")
+
+
+selectInput("n_escala6", label = "Seleccione la Escala:",
+            choices = C.Escala, selected = "**TOTAL")
+
+
+selectInput("n_sexo6", label = "Seleccione Sexo:",
+            choices = C.Sexo, selected = "**TOTAL")
+
+
+selectInput("p_naci6", label = "Seleccione Provincia de Nacimiento:",
+            choices = C.Provincia2, selected = "**TOTAL")
+ 
+ 
+## en mdatosM6() crear un filtro de la tabla original datos()
+## los datos estarán filtrados por EJÉRCITO, por RELACIÓN, por CUERPO, por ESCALA, y por SEXO  y por Provincia de Nacimiento.
+  mdatosM6 <- reactive({
+ # ver condición EJERCITO
+  Cond1<-input$n_ejercito6
+  d1<-datos
+  if ((Cond1)=="**TOTAL") {
+     d1<-d1[d1$Cod_Ejercito !=Cond1,]
+  } else{
+     d1<-d1[d1$Cod_Ejercito==Cond1,]
+  }
+    Cond2<-input$n_relac6
+  if ((Cond2)=="**TOTAL") {
+     d1<-d1[d1$Cod_Relacion != Cond2,]
+  } else{
+     d1<-d1[d1$Cod_Relacion == Cond2,]
+  }
+    
+   Cond5<-input$n_cuerpo6
+  if ((Cond5)=="**TOTAL") {
+     d1<-d1[d1$Cod_Cuerpo != Cond5,]
+  } else{
+     d1<-d1[d1$Cod_Cuerpo == Cond5,]
+  }  
+    
+      
+   Cond3<-input$n_escala6
+  if ((Cond3)=="**TOTAL") {
+     d1<-d1[d1$Cod_Escala != Cond3,]
+  } else{
+     d1<-d1[d1$Cod_Escala == Cond3,]
+  }
+    Cond4<-input$n_sexo6
+  if ((Cond4)=="**TOTAL") {
+     d1<-d1[d1$Sexo != Cond4,]
+  } else{
+     d1<-d1[d1$Sexo == Cond4,]
+  }
+      Cond6<-input$p_naci6
+  if ((Cond6)=="**TOTAL") {
+     d1<-d1[d1$CodNaci != Cond6,]
+  } else{
+     d1<-d1[d1$CodNaci == Cond6,]
+  }  
+    
+  d1
+  })
+ 
+
+```
+
+    
+Row {data-height=200}
+---------------------------------------
+
+### Gráfico Barras
+```{r echo = FALSE}
+## representar el diagrama de barras de las distancias, para la selección dada.
+renderPlot({
+d1<-mdatosM6()
+tt<-table(d1$NumProv)
+tt<-round(tt/sum(tt)*100,2)
+p<-barplot(tt, xlab = "Distancia entre Prov. Nacimiento y Prov.Destino", ylab="Porcentaje")
+print(p)
+})
+```
+
+### Cuartiles {data-width=200}
+```{r}
+## presentar la tabla de los cuartiles Q1, Q2 y Q3, para la selección dada.
+renderTable({
+d1<-mdatosM6()
+q1<-as.numeric(quantile(d1$NumProv,0.25))
+q2<-as.numeric(quantile(d1$NumProv,0.5))
+q3<-as.numeric(quantile(d1$NumProv,0.75))
+
+por<-c(25, 50, 75)
+cuart<-round(c(q1,q2,q3),0)
+tt<-data.frame(Porcentaje=por, Cuartil=cuart)
+tt
+})
+```
+
+Row
+---------------------------------------
+
+### tabla {data-width=250}
+```{r}
+## presentar la tablas con distancias y frecuencias y frecuencias acumuladas, para la selección dada.
+renderTable({
+d1<-mdatosM6()
+tt<-table(d1$NumProv)
+tt<-round(tt/sum(tt)*100,2)
+tt<-as.data.frame(tt)
+names(tt)<-c("Distancia","Freq")
+tt$Acum<-cumsum(tt$Freq)
+tt
+})
+```
+
+### mapa de Calor
+```{r}
+
+## presentar un mapa de calor para la provincias de Nacimiento y las distancias a las provincias de destino
+renderPlotly({
+d1<-mdatosM6()
+efectivos<-as.matrix(table(d1$CodNaci,d1$NumProv))
+ efectivos<-efectivos[order(rownames(efectivos)), ]
+distancias<-c(0:13)
+provincias<-rownames(efectivos)
+plot_ly(x = distancias, y=provincias, z = efectivos, type = "heatmap",
+   colors = colorRamp(c("white", "red")),
+   labRow="Provincias", labCol="Distancia"
+ )
+})
+
+
+```
+
+
+### Gráfico Box-plot {data-width=250}
+```{r echo = FALSE}
+## realizar un gráfico de cjas y bigotes para las distancias y para la selección dada.
+renderPlot({
+d1<-mdatosM6()
+p<-boxplot(d1$NumProv, ylab="Distancia")
+print(p)
+})
+```
+
+
+
+
